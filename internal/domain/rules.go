@@ -9,6 +9,8 @@ import (
 
 var catalogPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{1,63}$`)
 
+var batchNumberPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{1,63}$`)
+
 func requiredText(field, value string, max int) (string, error) {
 	cleaned := strings.TrimSpace(value)
 	if cleaned == "" {
@@ -47,4 +49,18 @@ func validatePercent(value int) error {
 		return contracts.Invalid("invalid_percent", "进度比例必须位于 0 到 100 之间")
 	}
 	return nil
+}
+
+func validateBatchNumber(value string) (string, error) {
+	cleaned, err := requiredText("批次号", value, 64)
+	if err != nil {
+		return "", err
+	}
+	if !batchNumberPattern.MatchString(cleaned) {
+		return "", contracts.Invalid(
+			"invalid_batch_number",
+			"批次号只能包含字母、数字、点、下划线和连字符",
+		)
+	}
+	return cleaned, nil
 }

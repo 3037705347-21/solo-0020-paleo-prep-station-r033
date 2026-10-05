@@ -92,9 +92,14 @@ func (s *Service) GetPlan(ctx context.Context, planID string) (PlanSnapshot, err
 		if !ok {
 			return notFoundPlan(planID)
 		}
+		materials, err := usageDetails(m, m.ListUsagesForPlan(planID))
+		if err != nil {
+			return err
+		}
 		snapshot = PlanSnapshot{
-			Plan:     plan,
-			Progress: m.ProgressForPlan(planID),
+			Plan:      plan,
+			Progress:  m.ProgressForPlan(planID),
+			Materials: materials,
 		}
 		return nil
 	})

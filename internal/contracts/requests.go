@@ -1,5 +1,7 @@
 package contracts
 
+import "time"
+
 type RegisterSpecimenRequest struct {
 	CatalogNumber string `json:"catalog_number"`
 	FieldLabel    string `json:"field_label"`
@@ -30,4 +32,21 @@ type ReleaseRequest struct {
 	Purpose    string `json:"purpose"`
 	Recipient  string `json:"recipient"`
 	ApprovedBy string `json:"approved_by"`
+}
+
+type ReceiveBatchRequest struct {
+	MaterialKind string    `json:"material_kind"`
+	BatchNumber  string    `json:"batch_number"`
+	Unit         string    `json:"unit"`
+	Quantity     int       `json:"quantity"`
+	ExpiresAt    time.Time `json:"expires_at"`
+}
+
+type IssueMaterialRequest struct {
+	BatchID  string `json:"batch_id"`
+	Quantity int    `json:"quantity"`
+}
+
+type MaterialQuantityRequest struct {
+	Quantity int `json:"quantity"`
 }

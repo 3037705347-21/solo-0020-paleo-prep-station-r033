@@ -35,11 +35,33 @@ type planSnapshot struct {
 	Progress []struct {
 		Percent int `json:"percent"`
 	} `json:"progress"`
+	Materials []materialUsageView `json:"materials"`
 }
 
 type releaseView struct {
 	ID         string `json:"id"`
 	SpecimenID string `json:"specimen_id"`
+}
+
+type batchView struct {
+	ID          string `json:"id"`
+	BatchNumber string `json:"batch_number"`
+	Received    int    `json:"received"`
+	Remaining   int    `json:"remaining"`
+}
+
+type batchSnapshotView struct {
+	Batch  batchView           `json:"batch"`
+	Usages []materialUsageView `json:"usages"`
+}
+
+type materialUsageView struct {
+	ID       string `json:"id"`
+	PlanID   string `json:"plan_id"`
+	BatchID  string `json:"batch_id"`
+	Issued   int    `json:"issued"`
+	Consumed int    `json:"consumed"`
+	Returned int    `json:"returned"`
 }
 
 func main() {
@@ -170,19 +192,25 @@ func run(workflow string) error {
 			return fmt.Errorf("expected available specimen, got %s", fetched.Status)
 		}
 		return nil
+	case "material-usage":
+		return checkMaterialUsage(client, server.URL)
 	default:
 		return fmt.Errorf("unknown workflow %q", workflow)
 	}
 }
 
 func registerSpecimen(client *http.Client, baseURL string) (specimenView, error) {
+	return registerSpecimenWithCatalog(client, baseURL, "PPS-2026-001")
+}
+
+func registerSpecimenWithCatalog(client *http.Client, baseURL, catalog string) (specimenView, error) {
 	var specimen specimenView
 	err := requestJSON(
 		client,
 		http.MethodPost,
 		baseURL+"/specimens",
 		contracts.RegisterSpecimenRequest{
-			CatalogNumber: "PPS-2026-001",
+			CatalogNumber: catalog,
 			FieldLabel:    "北坡-07",
 			TaxonHint:     "大型脊椎动物",
 			MatrixKind:    "粉砂岩",
@@ -213,7 +241,11 @@ func createPlan(client *http.Client, baseURL, specimenID string) (planView, erro
 }
 
 func completedPlanSetup(client *http.Client, baseURL string) (specimenView, planView, error) {
-	specimen, err := registerSpecimen(client, baseURL)
+	return approvedPlanSetup(client, baseURL, "PPS-2026-001")
+}
+
+func approvedPlanSetup(client *http.Client, baseURL, catalog string) (specimenView, planView, error) {
+	specimen, err := registerSpecimenWithCatalog(client, baseURL, catalog)
 	if err != nil {
 		return specimenView{}, planView{}, err
 	}
@@ -236,6 +268,10 @@ func completedPlanSetup(client *http.Client, baseURL string) (specimenView, plan
 }
 
 func recordProgress(client *http.Client, baseURL, planID string, percent int, stage string) error {
+	return recordProgressExpect(client, baseURL, planID, percent, stage, http.StatusCreated)
+}
+
+func recordProgressExpect(client *http.Client, baseURL, planID string, percent int, stage string, wantStatus int) error {
 	var ignored struct{}
 	return requestJSON(
 		client,
@@ -247,9 +283,338 @@ func recordProgress(client *http.Client, baseURL, planID string, percent int, st
 			Note:       "本地链路检查",
 			RecordedBy: "preparator-chen",
 		},
-		http.StatusCreated,
+		wantStatus,
 		&ignored,
 	)
+}
+
+func checkMaterialUsage(client *http.Client, baseURL string) error {
+	future := time.Now().Add(30 * 24 * time.Hour).UTC()
+	past := time.Now().Add(-time.Hour).UTC()
+
+	batchA, err := receiveBatch(client, baseURL, "加固液", "CONS-2026-001", "ml", 100, future, http.StatusCreated)
+	if err != nil {
+		return err
+	}
+	if batchA.Received != 100 || batchA.Remaining != 100 {
+		return fmt.Errorf("fresh batch should hold 100, got %+v", batchA)
+	}
+	if _, err := receiveBatch(client, baseURL, "加固液", "CONS-2026-001", "ml", 5, future, http.StatusConflict); err != nil {
+		return errors.New("duplicate batch number must be rejected")
+	}
+	batchB, err := receiveBatch(client, baseURL, "胶结剂", "ADH-2026-002", "ml", 10, future, http.StatusCreated)
+	if err != nil {
+		return err
+	}
+	expired, err := receiveBatch(client, baseURL, "包埋材料", "EMB-2020-099", "g", 5, past, http.StatusCreated)
+	if err != nil {
+		return err
+	}
+	var batchList struct {
+		Items []batchView `json:"items"`
+	}
+	if err := requestJSON(client, http.MethodGet, baseURL+"/materials/batches", nil, http.StatusOK, &batchList); err != nil {
+		return err
+	}
+	if len(batchList.Items) != 3 {
+		return fmt.Errorf("expected 3 batches, got %d", len(batchList.Items))
+	}
+
+	specimen, plan, err := approvedPlanSetup(client, baseURL, "PPS-2026-101")
+	if err != nil {
+		return err
+	}
+
+	usageA, err := issueMaterial(client, baseURL, plan.ID, batchA.ID, 40, http.StatusCreated)
+	if err != nil {
+		return err
+	}
+	if usageA.Issued != 40 || usageA.BatchID != batchA.ID || usageA.PlanID != plan.ID {
+		return fmt.Errorf("unexpected usage record %+v", usageA)
+	}
+	if _, err := issueMaterial(client, baseURL, plan.ID, batchA.ID, 1, http.StatusConflict); err != nil {
+		return errors.New("duplicate issue for the same plan and batch must fail")
+	}
+	if _, err := issueMaterial(client, baseURL, plan.ID, expired.ID, 1, http.StatusConflict); err != nil {
+		return errors.New("expired batch must not be referenced by a plan")
+	}
+	batchA, err = fetchBatch(client, baseURL, batchA.ID, 1)
+	if err != nil {
+		return err
+	}
+	if batchA.Remaining != 60 {
+		return fmt.Errorf("expected remaining 60 after issue, got %d", batchA.Remaining)
+	}
+
+	if _, err := consumeMaterial(client, baseURL, plan.ID, usageA.ID, 10, http.StatusOK); err != nil {
+		return err
+	}
+	usageA, err = returnMaterial(client, baseURL, plan.ID, usageA.ID, 10, http.StatusOK)
+	if err != nil {
+		return err
+	}
+	if usageA.Consumed != 10 || usageA.Returned != 10 {
+		return fmt.Errorf("unexpected usage after consume and return %+v", usageA)
+	}
+	batchA, err = fetchBatch(client, baseURL, batchA.ID, 1)
+	if err != nil {
+		return err
+	}
+	if batchA.Remaining != 70 {
+		return fmt.Errorf("expected remaining 70 after return, got %d", batchA.Remaining)
+	}
+
+	if err := concurrentConsume(client, baseURL, plan.ID, usageA.ID, 20); err != nil {
+		return err
+	}
+	usageA, err = fetchPlanUsage(client, baseURL, plan.ID, usageA.ID)
+	if err != nil {
+		return err
+	}
+	if usageA.Issued != 40 || usageA.Consumed != 30 || usageA.Returned != 10 {
+		return fmt.Errorf("concurrent consume left inconsistent usage %+v", usageA)
+	}
+	if _, err := consumeMaterial(client, baseURL, plan.ID, usageA.ID, 1, http.StatusConflict); err != nil {
+		return errors.New("consume beyond held quantity must fail")
+	}
+
+	usageB, err := issueMaterial(client, baseURL, plan.ID, batchB.ID, 10, http.StatusCreated)
+	if err != nil {
+		return err
+	}
+	batchB, err = fetchBatch(client, baseURL, batchB.ID, 1)
+	if err != nil {
+		return err
+	}
+	if batchB.Remaining != 0 {
+		return fmt.Errorf("expected depleted batch, got %d", batchB.Remaining)
+	}
+
+	if err := recordProgressExpect(client, baseURL, plan.ID, 100, "表面加固", http.StatusConflict); err != nil {
+		return errors.New("plan with unsettled material usage must not complete")
+	}
+	if _, err := returnMaterial(client, baseURL, plan.ID, usageB.ID, 10, http.StatusOK); err != nil {
+		return err
+	}
+	if err := recordProgressExpect(client, baseURL, plan.ID, 100, "表面加固", http.StatusCreated); err != nil {
+		return err
+	}
+
+	var snapshot planSnapshot
+	if err := requestJSON(client, http.MethodGet, baseURL+"/plans/"+plan.ID, nil, http.StatusOK, &snapshot); err != nil {
+		return err
+	}
+	if snapshot.Plan.Status != "completed" || len(snapshot.Materials) != 2 {
+		return errors.New("plan should complete with exactly two material usage records")
+	}
+	for _, usage := range snapshot.Materials {
+		if usage.Issued != usage.Consumed+usage.Returned {
+			return fmt.Errorf("completed plan carries unsettled usage %+v", usage)
+		}
+	}
+	var fetchedSpecimen specimenView
+	if err := requestJSON(client, http.MethodGet, baseURL+"/specimens/"+specimen.ID, nil, http.StatusOK, &fetchedSpecimen); err != nil {
+		return err
+	}
+	if fetchedSpecimen.Status != "stabilized" {
+		return fmt.Errorf("expected stabilized specimen, got %s", fetchedSpecimen.Status)
+	}
+
+	batchA, err = fetchBatch(client, baseURL, batchA.ID, 1)
+	if err != nil {
+		return err
+	}
+	if batchA.Remaining != 70 {
+		return fmt.Errorf("batch balance inconsistent with usage: got %d want 70", batchA.Remaining)
+	}
+	batchB, err = fetchBatch(client, baseURL, batchB.ID, 1)
+	if err != nil {
+		return err
+	}
+	if batchB.Remaining != 10 {
+		return fmt.Errorf("batch balance inconsistent with usage: got %d want 10", batchB.Remaining)
+	}
+
+	_, plan2, err := approvedPlanSetup(client, baseURL, "PPS-2026-102")
+	if err != nil {
+		return err
+	}
+	if _, err := issueMaterial(client, baseURL, plan2.ID, batchB.ID, 10, http.StatusCreated); err != nil {
+		return err
+	}
+	_, plan3, err := approvedPlanSetup(client, baseURL, "PPS-2026-103")
+	if err != nil {
+		return err
+	}
+	if _, err := issueMaterial(client, baseURL, plan3.ID, batchB.ID, 1, http.StatusConflict); err != nil {
+		return errors.New("depleted batch must reject further issues")
+	}
+	if _, err := issueMaterial(client, baseURL, plan3.ID, batchA.ID, 71, http.StatusConflict); err != nil {
+		return errors.New("issue beyond batch balance must fail")
+	}
+	return nil
+}
+
+func receiveBatch(
+	client *http.Client,
+	baseURL string,
+	kind string,
+	number string,
+	unit string,
+	quantity int,
+	expiresAt time.Time,
+	wantStatus int,
+) (batchView, error) {
+	var batch batchView
+	err := requestJSON(
+		client,
+		http.MethodPost,
+		baseURL+"/materials/batches",
+		contracts.ReceiveBatchRequest{
+			MaterialKind: kind,
+			BatchNumber:  number,
+			Unit:         unit,
+			Quantity:     quantity,
+			ExpiresAt:    expiresAt,
+		},
+		wantStatus,
+		&batch,
+	)
+	return batch, err
+}
+
+func fetchBatch(client *http.Client, baseURL, batchID string, wantUsages int) (batchView, error) {
+	var snapshot batchSnapshotView
+	if err := requestJSON(
+		client,
+		http.MethodGet,
+		baseURL+"/materials/batches/"+batchID,
+		nil,
+		http.StatusOK,
+		&snapshot,
+	); err != nil {
+		return batchView{}, err
+	}
+	if len(snapshot.Usages) != wantUsages {
+		return batchView{}, fmt.Errorf(
+			"batch %s should have %d usage records, got %d",
+			batchID,
+			wantUsages,
+			len(snapshot.Usages),
+		)
+	}
+	return snapshot.Batch, nil
+}
+
+func fetchPlanUsage(client *http.Client, baseURL, planID, usageID string) (materialUsageView, error) {
+	var snapshot planSnapshot
+	if err := requestJSON(client, http.MethodGet, baseURL+"/plans/"+planID, nil, http.StatusOK, &snapshot); err != nil {
+		return materialUsageView{}, err
+	}
+	for _, usage := range snapshot.Materials {
+		if usage.ID == usageID {
+			return usage, nil
+		}
+	}
+	return materialUsageView{}, fmt.Errorf("plan %s is missing usage %s", planID, usageID)
+}
+
+func issueMaterial(
+	client *http.Client,
+	baseURL string,
+	planID string,
+	batchID string,
+	quantity int,
+	wantStatus int,
+) (materialUsageView, error) {
+	var usage materialUsageView
+	err := requestJSON(
+		client,
+		http.MethodPost,
+		baseURL+"/plans/"+planID+"/materials",
+		contracts.IssueMaterialRequest{BatchID: batchID, Quantity: quantity},
+		wantStatus,
+		&usage,
+	)
+	return usage, err
+}
+
+func consumeMaterial(
+	client *http.Client,
+	baseURL string,
+	planID string,
+	usageID string,
+	quantity int,
+	wantStatus int,
+) (materialUsageView, error) {
+	var usage materialUsageView
+	err := requestJSON(
+		client,
+		http.MethodPost,
+		baseURL+"/plans/"+planID+"/materials/"+usageID+"/consume",
+		contracts.MaterialQuantityRequest{Quantity: quantity},
+		wantStatus,
+		&usage,
+	)
+	return usage, err
+}
+
+func returnMaterial(
+	client *http.Client,
+	baseURL string,
+	planID string,
+	usageID string,
+	quantity int,
+	wantStatus int,
+) (materialUsageView, error) {
+	var usage materialUsageView
+	err := requestJSON(
+		client,
+		http.MethodPost,
+		baseURL+"/plans/"+planID+"/materials/"+usageID+"/return",
+		contracts.MaterialQuantityRequest{Quantity: quantity},
+		wantStatus,
+		&usage,
+	)
+	return usage, err
+}
+
+func concurrentConsume(client *http.Client, baseURL, planID, usageID string, quantity int) error {
+	statuses := make(chan int, 2)
+	url := baseURL + "/plans/" + planID + "/materials/" + usageID + "/consume"
+	for i := 0; i < 2; i++ {
+		go func() {
+			status, err := postForStatus(client, url, contracts.MaterialQuantityRequest{Quantity: quantity})
+			if err != nil {
+				statuses <- -1
+				return
+			}
+			statuses <- status
+		}()
+	}
+	first, second := <-statuses, <-statuses
+	matched := (first == http.StatusOK && second == http.StatusConflict) ||
+		(first == http.StatusConflict && second == http.StatusOK)
+	if !matched {
+		return fmt.Errorf("concurrent consume should yield one 200 and one 409, got %d and %d", first, second)
+	}
+	return nil
+}
+
+func postForStatus(client *http.Client, url string, body any) (int, error) {
+	encoded, err := json.Marshal(body)
+	if err != nil {
+		return 0, err
+	}
+	response, err := client.Post(url, "application/json", bytes.NewReader(encoded))
+	if err != nil {
+		return 0, err
+	}
+	defer response.Body.Close()
+	if _, err := io.Copy(io.Discard, io.LimitReader(response.Body, 1<<20)); err != nil {
+		return 0, err
+	}
+	return response.StatusCode, nil
 }
 
 func requestJSON(

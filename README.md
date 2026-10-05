@@ -1,6 +1,6 @@
 # 古生物修复制备台
 
-古生物修复制备台是一个使用 Go 编写的后端基线，用于记录化石标本、审批修复方案、回填制备进度，并在全部工序完成后办理研究借阅放行。
+古生物修复制备台是一个使用 Go 编写的后端基线，用于记录化石标本、审批修复方案、回填制备进度，并在全部工序完成后办理研究借阅放行。修复所需的胶结剂、加固液和包埋材料按批次入库，方案通过领用、消耗和退料跟踪实际用量，批次余额与方案用量始终保持一致。
 
 该服务只使用进程内仓储，便于在本机重复启动和检查。它不依赖数据库、远端接口或其他在线资源。
 
@@ -32,6 +32,13 @@ go run ./cmd/paleo-prep-station --addr 127.0.0.1:18133
 - `POST /plans/{id}/approval`
 - `POST /plans/{id}/progress`
 - `POST /specimens/{id}/release`
+- `GET /materials/batches` 与 `POST /materials/batches`
+- `GET /materials/batches/{id}`
+- `GET /plans/{id}/materials` 与 `POST /plans/{id}/materials`
+- `POST /plans/{id}/materials/{usageId}/consume`
+- `POST /plans/{id}/materials/{usageId}/return`
+
+耗材批次的 `expires_at` 使用 RFC 3339 时间格式。已审批或进行中的方案才能领用耗材；同一方案对同一批次只能领用一次；过期、耗尽或余额不足的批次会被拒绝引用；方案完成前必须把领用的耗材全部登记为消耗或退回。
 
 ## 本地验证
 
@@ -42,6 +49,7 @@ go run ./cmd/workflowcheck --workflow register-specimen
 go run ./cmd/workflowcheck --workflow approve-prep-plan
 go run ./cmd/workflowcheck --workflow log-preparation
 go run ./cmd/workflowcheck --workflow release-for-study
+go run ./cmd/workflowcheck --workflow material-usage
 ```
 
 这些检查会启动临时 HTTP 处理器并调用真实公共路由。

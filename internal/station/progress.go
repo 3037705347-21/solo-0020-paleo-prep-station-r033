@@ -47,6 +47,11 @@ func (s *Service) LogProgress(
 			}
 		}
 		if request.Percent == 100 {
+			for _, usage := range m.ListUsagesForPlan(planID) {
+				if !usage.IsSettled() {
+					return contracts.Conflict("unsettled_material_usage", "方案存在未消耗且未退回的耗材，不能完成")
+				}
+			}
 			if err := plan.Complete(s.now()); err != nil {
 				return err
 			}

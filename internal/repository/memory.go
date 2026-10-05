@@ -12,6 +12,8 @@ type state struct {
 	plans     map[string]domain.PrepPlan
 	progress  map[string][]domain.ProgressEntry
 	releases  map[string]domain.ReleaseRecord
+	batches   map[string]domain.MaterialBatch
+	usages    map[string]domain.MaterialUsage
 }
 
 type MemoryRepository struct {
@@ -26,6 +28,8 @@ func NewMemory() *MemoryRepository {
 			plans:     make(map[string]domain.PrepPlan),
 			progress:  make(map[string][]domain.ProgressEntry),
 			releases:  make(map[string]domain.ReleaseRecord),
+			batches:   make(map[string]domain.MaterialBatch),
+			usages:    make(map[string]domain.MaterialUsage),
 		},
 	}
 }
@@ -54,6 +58,8 @@ func cloneMutation(source state) *Mutation {
 		plans:     make(map[string]domain.PrepPlan, len(source.plans)),
 		progress:  make(map[string][]domain.ProgressEntry, len(source.progress)),
 		releases:  make(map[string]domain.ReleaseRecord, len(source.releases)),
+		batches:   make(map[string]domain.MaterialBatch, len(source.batches)),
+		usages:    make(map[string]domain.MaterialUsage, len(source.usages)),
 	}
 	for key, value := range source.specimens {
 		copied.specimens[key] = value
@@ -66,6 +72,12 @@ func cloneMutation(source state) *Mutation {
 	}
 	for key, value := range source.releases {
 		copied.releases[key] = value
+	}
+	for key, value := range source.batches {
+		copied.batches[key] = value
+	}
+	for key, value := range source.usages {
+		copied.usages[key] = value
 	}
 	return &Mutation{state: copied}
 }
@@ -163,4 +175,86 @@ func (m *Mutation) ReleaseForSpecimen(specimenID string) (domain.ReleaseRecord, 
 
 func (m *Mutation) PutRelease(value domain.ReleaseRecord) {
 	m.state.releases[value.ID] = value
+}
+
+func (m *Mutation) GetBatch(id string) (domain.MaterialBatch, bool) {
+	value, ok := m.state.batches[id]
+	return value, ok
+}
+
+func (m *Mutation) FindBatchByNumber(batchNumber string) (domain.MaterialBatch, bool) {
+	for _, value := range m.state.batches {
+		if value.BatchNumber == batchNumber {
+			return value, true
+		}
+	}
+	return domain.MaterialBatch{}, false
+}
+
+func (m *Mutation) ListBatches() []domain.MaterialBatch {
+	values := make([]domain.MaterialBatch, 0, len(m.state.batches))
+	for _, value := range m.state.batches {
+		values = append(values, value)
+	}
+	sort.Slice(values, func(i, j int) bool {
+		if values[i].CreatedAt.Equal(values[j].CreatedAt) {
+			return values[i].ID < values[j].ID
+		}
+		return values[i].CreatedAt.Before(values[j].CreatedAt)
+	})
+	return values
+}
+
+func (m *Mutation) PutBatch(value domain.MaterialBatch) {
+	m.state.batches[value.ID] = value
+}
+
+func (m *Mutation) GetUsage(id string) (domain.MaterialUsage, bool) {
+	value, ok := m.state.usages[id]
+	return value, ok
+}
+
+func (m *Mutation) FindUsageByPlanAndBatch(planID string, batchID string) (domain.MaterialUsage, bool) {
+	for _, value := range m.state.usages {
+		if value.PlanID == planID && value.BatchID == batchID {
+			return value, true
+		}
+	}
+	return domain.MaterialUsage{}, false
+}
+
+func (m *Mutation) ListUsagesForPlan(planID string) []domain.MaterialUsage {
+	values := make([]domain.MaterialUsage, 0)
+	for _, value := range m.state.usages {
+		if value.PlanID == planID {
+			values = append(values, value)
+		}
+	}
+	sort.Slice(values, func(i, j int) bool {
+		if values[i].CreatedAt.Equal(values[j].CreatedAt) {
+			return values[i].ID < values[j].ID
+		}
+		return values[i].CreatedAt.Before(values[j].CreatedAt)
+	})
+	return values
+}
+
+func (m *Mutation) ListUsagesForBatch(batchID string) []domain.MaterialUsage {
+	values := make([]domain.MaterialUsage, 0)
+	for _, value := range m.state.usages {
+		if value.BatchID == batchID {
+			values = append(values, value)
+		}
+	}
+	sort.Slice(values, func(i, j int) bool {
+		if values[i].CreatedAt.Equal(values[j].CreatedAt) {
+			return values[i].ID < values[j].ID
+		}
+		return values[i].CreatedAt.Before(values[j].CreatedAt)
+	})
+	return values
+}
+
+func (m *Mutation) PutUsage(value domain.MaterialUsage) {
+	m.state.usages[value.ID] = value
 }
