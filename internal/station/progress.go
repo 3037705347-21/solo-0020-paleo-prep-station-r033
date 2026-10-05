@@ -47,6 +47,17 @@ func (s *Service) LogProgress(
 			}
 		}
 		if request.Percent == 100 {
+			// Completion requires usage facts and batch reality to agree:
+			// every checked-out line must be consumed or returned first,
+			// otherwise the plan closes with stock in a preparator's hands.
+			for _, usage := range m.MaterialsForPlan(planID) {
+				if !usage.IsSettled() {
+					return contracts.Conflict(
+						"material_checkout_unsettled",
+						"方案存在未结清的耗材批次 "+usage.BatchNumber+"，必须先完成消耗或退料",
+					)
+				}
+			}
 			if err := plan.Complete(s.now()); err != nil {
 				return err
 			}

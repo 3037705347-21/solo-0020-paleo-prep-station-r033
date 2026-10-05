@@ -31,7 +31,23 @@ go run ./cmd/paleo-prep-station --addr 127.0.0.1:18133
 - `GET /plans/{id}`
 - `POST /plans/{id}/approval`
 - `POST /plans/{id}/progress`
+- `GET /plans/{id}/materials`
+- `POST /plans/{id}/material-checkouts`
+- `POST /plans/{id}/material-consumptions`
+- `POST /plans/{id}/material-returns`
+- `GET/POST /material-batches` 与 `GET /material-batches/{id}`
 - `POST /specimens/{id}/release`
+
+## 耗材批次与方案用量
+
+胶结剂、加固液和包埋材料按批次入库（`POST /material-batches`），每个批次持有唯一的货架余额，并随入库流水建立台账。方案只能引用未过期且余额充足的批次：
+
+- 领用（checkout）在同一事务内扣减批次余额并建立方案用量行；同一方案对同一批次存在未结清领用时，重复领用直接 `409`。
+- 消耗（consumption）只能发生在该方案已领用且尚未结清的余量内，不再次扣减货架余额；过期批次即使已领用也禁止消耗。
+- 退料（return）只能退回实际持有的未用量，退回后货架余额恢复，且不得超过入库数量。
+- 方案进度达到 100% 时，所有领用行必须已结清（消耗或退料完毕），否则方案完成失败且不留下半成品状态。
+
+`GET /plans/{id}` 返回方案的每条用量行（领用/消耗/退料累计），`GET /material-batches/{id}` 返回批次当前余额与全部流水，二者事实始终一致。
 
 ## 本地验证
 
@@ -42,6 +58,7 @@ go run ./cmd/workflowcheck --workflow register-specimen
 go run ./cmd/workflowcheck --workflow approve-prep-plan
 go run ./cmd/workflowcheck --workflow log-preparation
 go run ./cmd/workflowcheck --workflow release-for-study
+go run ./cmd/workflowcheck --workflow track-material-batches
 ```
 
 这些检查会启动临时 HTTP 处理器并调用真实公共路由。

@@ -23,6 +23,13 @@ func NewRouter(service *station.Service) http.Handler {
 	mux.HandleFunc("GET /plans/{id}", api.getPlan)
 	mux.HandleFunc("POST /plans/{id}/approval", api.approvePlan)
 	mux.HandleFunc("POST /plans/{id}/progress", api.logProgress)
+	mux.HandleFunc("GET /plans/{id}/materials", api.listPlanMaterials)
+	mux.HandleFunc("POST /plans/{id}/material-checkouts", api.checkoutMaterial)
+	mux.HandleFunc("POST /plans/{id}/material-consumptions", api.consumeMaterial)
+	mux.HandleFunc("POST /plans/{id}/material-returns", api.returnMaterial)
+	mux.HandleFunc("GET /material-batches", api.listBatches)
+	mux.HandleFunc("POST /material-batches", api.intakeBatch)
+	mux.HandleFunc("GET /material-batches/{id}", api.getBatch)
 	return requestIDMiddleware(mux)
 }
 

@@ -31,3 +31,39 @@ type ReleaseRequest struct {
 	Recipient  string `json:"recipient"`
 	ApprovedBy string `json:"approved_by"`
 }
+
+// IntakeBatchRequest registers one consumable lot on the bench.
+type IntakeBatchRequest struct {
+	Kind        string `json:"kind"`
+	Name        string `json:"name"`
+	BatchNumber string `json:"batch_number"`
+	Unit        string `json:"unit"`
+	Quantity    int    `json:"quantity"`
+	ReceivedBy  string `json:"received_by"`
+	ExpiresAt   string `json:"expires_at"`
+	Note        string `json:"note"`
+}
+
+// MaterialCheckoutRequest reserves stock from one batch for one plan.
+type MaterialCheckoutRequest struct {
+	BatchID  string `json:"batch_id"`
+	Quantity int    `json:"quantity"`
+	Operator string `json:"operator"`
+	Note     string `json:"note"`
+}
+
+// MaterialConsumptionRequest records actual use of held stock.
+type MaterialConsumptionRequest struct {
+	BatchID  string `json:"batch_id"`
+	Quantity int    `json:"quantity"`
+	Operator string `json:"operator"`
+	Note     string `json:"note"`
+}
+
+// MaterialReturnRequest gives unused held stock back to the shelf.
+type MaterialReturnRequest struct {
+	BatchID  string `json:"batch_id"`
+	Quantity int    `json:"quantity"`
+	Operator string `json:"operator"`
+	Note     string `json:"note"`
+}
